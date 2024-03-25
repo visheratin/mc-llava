@@ -113,7 +113,6 @@ class MultiCropImageProcessor(ImageProcessingMixin):
             y_coords[-1][1] = height
         for _, y_coord in enumerate(y_coords):
             for _, x_coord in enumerate(x_coords):
-                print(x_coord, y_coord)
                 crop = image.crop((x_coord[0], y_coord[0], x_coord[1], y_coord[1]))
                 outputs.append(self.processor(crop, return_tensors="pt").pixel_values)
                 output_coords.append(
