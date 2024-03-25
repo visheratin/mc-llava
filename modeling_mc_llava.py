@@ -1041,6 +1041,7 @@ class PhiModel(PhiPreTrainedModel):
             attentions=all_self_attns,
         )
 
+
 class PhiForCausalLM(PhiPreTrainedModel):
     _tied_weights_keys = ["lm_head.weight"]
 
@@ -1383,55 +1384,23 @@ class SiglipVisionEncoder(nn.Module):
             nn.Linear(config.vision_embed_dim, config.vision_embed_dim),
         )
 
-        self.num_tokens = 728
-
-    def feature_select(self, image_forward_outs, coord_feature, num_tokens=None):
-        image_features = image_forward_outs
-        image_features = image_features[:, 1:]
-        if num_tokens is None:
-            num_tokens = self.num_tokens
-        split_size = int(num_tokens / image_features.shape[0])
-        sum = 0
-        output_list = []
-        for i in range(image_features.shape[0]):
-            if i == image_features.shape[0] - 1:
-                size = num_tokens - sum
-            else:
-                size = split_size
-                sum += size
-            chunk_output = image_features[i, -size:, :]
-            chunk_output = chunk_output + coord_feature[i]
-            output_list.append(chunk_output)
-        image_features = torch.cat(output_list)
-        return image_features
-
-    def process_image_chunks(self, image_tensor, coord_tensor, num_tokens):
+    def forward(self, image_tensor: torch.Tensor, coord_tensor: torch.Tensor):
         if image_tensor.shape[0] > 50:
-            image_forward_out = []
+            image_features = []
             for i in range(0, image_tensor.shape[0], 50):
                 part_forward_out = self.vision_tower(
-                    image_tensor[i : i + 50], output_hidden_states=True
-                ).hidden_states[-1]
-                image_forward_out.append(part_forward_out)
-            image_forward_out = torch.cat(image_forward_out, dim=0)
+                    image_tensor[i : i + 50]
+                ).pooler_output
+                image_features.append(part_forward_out)
+            image_features = torch.cat(image_features, dim=0)
         else:
-            image_forward_out = self.vision_tower(
+            image_features = self.vision_tower(
                 image_tensor, output_hidden_states=True
-            ).hidden_states[-1]
-        coord_feature = self.coord_embed(coord_tensor)
-        if len(coord_feature.shape) == 1:
-            coord_feature = coord_feature.unsqueeze(0)
-        image_feature = self.feature_select(image_forward_out, coord_feature, num_tokens).to(
-            image_tensor.dtype
-        )
-        return image_feature
-
-    def forward(self, images: List[torch.Tensor], coords: List[torch.Tensor], num_tokens = None):
-        image_features = []
-        for i, image in enumerate(images):
-            image_feature = self.process_image_chunks(image, coords[i], num_tokens)
-            image_features.append(image_feature)
-        image_features = torch.stack(image_features)
+            ).pooler_output
+        coord_features = self.coord_embed(coord_tensor)
+        if len(coord_features.shape) == 1:
+            coord_features = coord_features.unsqueeze(0)
+        image_features = image_features + coord_features
         return image_features
 
 
@@ -1528,7 +1497,13 @@ class LlavaForCausalLM(LlavaPreTrainedModel):
         return model_embeds
 
     def _merge_input_ids_with_image_features(
-        self, image_features, inputs_embeds, input_ids, attention_mask, position_ids, labels
+        self,
+        image_features,
+        inputs_embeds,
+        input_ids,
+        attention_mask,
+        position_ids,
+        labels,
     ):
         image_features = image_features.to(inputs_embeds.dtype)
         num_images, num_image_patches, embed_dim = image_features.shape
@@ -1628,7 +1603,6 @@ class LlavaForCausalLM(LlavaPreTrainedModel):
             return final_embedding, final_attention_mask, position_ids, final_labels
         else:
             return final_embedding, final_attention_mask, position_ids, None
-        
 
     def forward(
         self,
@@ -1672,7 +1646,7 @@ class LlavaForCausalLM(LlavaPreTrainedModel):
                     input_ids,
                     attention_mask,
                     position_ids,
-                    labels
+                    labels,
                 )
             else:
                 # In case input_ids.shape[1] == 1 & pixel_values==None & past_key_values != None, we are in the case of

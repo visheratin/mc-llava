@@ -19,7 +19,7 @@ class Conversation:
         input_ids = tokenizer(text, return_tensors="pt").input_ids.squeeze(0)
         return text, input_ids
 
-    def get_prompt(self, tokenizer, ignore_index=-100, max_length=1000):
+    def get_prompt(self, tokenizer, ignore_index=-100):
         prompt = ""
         prompt_ids = torch.tensor([]).long()
         prompt_labels = torch.tensor([]).long()
@@ -37,15 +37,4 @@ class Conversation:
                 labels = input_ids.clone()
                 labels[: empty_ids.shape[0]] = ignore_index
             prompt_labels = torch.cat([prompt_labels, labels])
-        pad_length = max_length - prompt_ids.shape[0]
-        if pad_length > 0:
-            prompt_ids = torch.cat(
-                [prompt_ids, torch.full((pad_length,), tokenizer.pad_token_id).long()]
-            )
-            prompt_labels = torch.cat(
-                [prompt_labels, torch.full((pad_length,), ignore_index).long()]
-            )
-        else:
-            prompt_ids = prompt_ids[:max_length]
-            prompt_labels = prompt_labels[:max_length]
         return prompt, prompt_ids, prompt_labels

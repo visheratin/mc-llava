@@ -9,7 +9,6 @@ from PIL import Image
 from torch.utils.data import Dataset
 
 from conversation import Conversation
-from processing_mc_llava import MultiCropImageProcessor
 
 
 class ObjectsDataset(Dataset):
@@ -17,8 +16,6 @@ class ObjectsDataset(Dataset):
         self,
         images_dir: str,
         tokenizer,
-        processor: MultiCropImageProcessor,
-        crops_limit: int,
         max_size: int,
     ) -> None:
         super().__init__()
@@ -30,8 +27,6 @@ class ObjectsDataset(Dataset):
             self.dataset = self.dataset.shuffle()
             self.dataset = self.dataset.select(list(range(max_size)))
         self.tokenizer = tokenizer
-        self.processor = processor
-        self.crops_limit = crops_limit
 
     def __len__(self):
         return len(self.dataset)
@@ -53,14 +48,11 @@ class ObjectsDataset(Dataset):
             image = self.open_image(item["id"])
         except:
             return self.__getitem__(idx + 1)
-        max_crops = random.randint(0, self.crops_limit)
-        image_res = self.processor([image], max_crops)
         return (
             input_ids,
             attention_mask,
             labels,
-            image_res["pixel_values"],
-            image_res["coords"],
+            image,
         )
 
     def open_image(self, id: str):

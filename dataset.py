@@ -22,44 +22,32 @@ class TrainingDataset(Dataset):
         self.tokenizer = AutoTokenizer.from_pretrained(
             "visheratin/MC-LLaVA-3b", trust_remote_code=True
         )
-        self.processor = MultiCropImageProcessor("visheratin/MC-LLaVA-3b")
+        self.processor = MultiCropImageProcessor("visheratin/MC-LLaVA-3b", crops_limit)
 
         landmarks_root = os.path.join(data_root, "landmarks")
-        landmarks_dataset = LandmarksDataset(
-            landmarks_root, self.tokenizer, self.processor, crops_limit
-        )
-        uber_dataset = UberDataset(self.tokenizer, self.processor, crops_limit)
+        landmarks_dataset = LandmarksDataset(landmarks_root, self.tokenizer)
+        uber_dataset = UberDataset(self.tokenizer)
         objects_dataset = ObjectsDataset(
             os.path.join(data_root, "laion"),
             self.tokenizer,
-            self.processor,
-            crops_limit,
             35000,
         )
         ocrvqa_dataset = OcrvqaDataset(
             self.tokenizer,
-            self.processor,
-            crops_limit,
         )
         textvqa_dataset = TextvqaDataset(
             self.tokenizer,
-            self.processor,
-            crops_limit,
         )
         captions_dataset = JsonDataset(
             os.path.join(data_root, "captions.json"),
             os.path.join(data_root, "laion"),
             self.tokenizer,
-            self.processor,
-            crops_limit,
             100000,
         )
         questions_dataset = JsonDataset(
             os.path.join(data_root, "questions.json"),
             os.path.join(data_root, "laion"),
             self.tokenizer,
-            self.processor,
-            crops_limit,
             50000,
         )
         self.datasets = [

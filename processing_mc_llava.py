@@ -3,9 +3,13 @@ from typing import List, Optional, Union
 
 import torch
 from PIL import Image
-from transformers import ImageProcessingMixin, ProcessorMixin, SiglipImageProcessor, AutoTokenizer
+from transformers import (
+    AutoTokenizer,
+    ImageProcessingMixin,
+    ProcessorMixin,
+    SiglipImageProcessor,
+)
 from transformers.feature_extraction_utils import BatchFeature
-from transformers.image_utils import ImageInput
 from transformers.tokenization_utils_base import (
     PaddingStrategy,
     PreTokenizedInput,
@@ -20,99 +24,110 @@ class MultiCropImageProcessor(ImageProcessingMixin):
         self.processor = SiglipImageProcessor.from_pretrained(model_name)
         self.crop_size = 384
         self.max_crops = max_crops
-        self.stride_ratio = 2
 
     def __call__(
         self,
         images: List[Image.Image],
         max_crops: int = -1,
     ):
-        res = {
-            "pixel_values": [],
-            "coords": [],
-        }
+        pixel_values = []
+        coords = []
         if max_crops < 0:
             max_crops = self.max_crops
+        crop_nums = []
         for image in images:
-            outputs, output_coords = self.process_image(image, max_crops)
-            res["pixel_values"].append(outputs)
-            res["coords"].append(output_coords)
-            return res
+            crop_nums.append(self.crops_num(image, self.crop_size))
+        mean_crop_num = int(sum(crop_nums) / len(crop_nums))
+        if mean_crop_num > max_crops:
+            mean_crop_num = max_crops
+        crops_num = self.round_num_crops(mean_crop_num)
+        for image in images:
+            outputs, output_coords = self.process_image(image, crops_num)
+            pixel_values.append(outputs)
+            coords.append(output_coords)
+        pixel_values = torch.stack(pixel_values)
+        coords = torch.stack(coords)
+        return pixel_values, coords
 
-    def process_image(
-        self,
-        image: Image.Image,
-        max_crops: int
-    ):
+    def round_num_crops(self, n_crops: int):
+        highly_composite_numbers = [
+            1,
+            2,
+            4,
+            6,
+            12,
+            24,
+            36,
+            48,
+            60,
+            120,
+            180,
+            240,
+        ]
+        for i in range(len(highly_composite_numbers) - 1, -1, -1):
+            if highly_composite_numbers[i] <= n_crops:
+                return highly_composite_numbers[i]
+
+    def crops_num(self, image: Image.Image, crop_size: int):
+        width, height = image.size
+        x_steps = width // crop_size
+        y_steps = height // crop_size
+        return x_steps * y_steps
+
+    def process_image(self, image: Image.Image, crops_num: int):
+        whole_image_res = self.processor(image, return_tensors="pt").pixel_values
+        whole_image_coords = torch.tensor([0.5, 0.5, 1.0, 1.0])
         outputs = []
         output_coords = []
-        outputs.append(self.processor(image, return_tensors="pt").pixel_values)
-        output_coords.append(torch.tensor([0.5, 0.5]))
         width, height = image.size
-        crop_size = self.crop_size
-        stride = crop_size // self.stride_ratio
-        if (
-            max_crops == 0
-            or width <= (crop_size + stride)
-            and height <= (crop_size + stride)
-        ):
-            outputs = torch.cat(outputs, dim=0)
-            output_coords = torch.cat(output_coords, dim=0)
-            output_coords = output_coords.unsqueeze(0)
-            return outputs, output_coords
-        total_tokens = math.inf
-        while total_tokens > max_crops:
-            total_tokens = (
-                math.floor((width - crop_size) / stride) + 1
-            ) * (
-                math.floor((height - crop_size) / stride) + 1
-            )
-            if total_tokens > max_crops:
-                crop_size += 10
-                stride = crop_size // self.stride_ratio
-        stride = crop_size // self.stride_ratio
-        x_steps = int(math.floor((width - crop_size) / stride) + 1)
+        aspect_ratio = width / height
+        aspect_sum = aspect_ratio + 1
+        small_crop_num = round(math.sqrt(crops_num / aspect_sum))
+        numbers = [1, 2, 3, 4, 5, 6]
+        for _, number in enumerate(numbers):
+            if number >= small_crop_num and crops_num % number == 0:
+                small_crop_num = number
+                break
+        large_crop_num = crops_num // small_crop_num
+        if aspect_ratio > 1:
+            x_steps = large_crop_num
+            y_steps = small_crop_num
+        else:
+            x_steps = small_crop_num
+            y_steps = large_crop_num
         if x_steps < 1:
             x_steps = 1
-        y_steps = int(math.floor((height - crop_size) / stride) + 1)
         if y_steps < 1:
             y_steps = 1
         if x_steps == 1 and y_steps == 1:
-            outputs = torch.cat(outputs, dim=0)
-            output_coords = torch.cat(output_coords, dim=0)
-            output_coords = output_coords.unsqueeze(0)
-            return outputs, output_coords
-        x_coords = []
-        y_coords = []
-        for i in range(x_steps):
-            x_coords.append([i * stride, i * stride + crop_size])
+            return self.processor(
+                image, return_tensors="pt"
+            ).pixel_values, torch.tensor([[0.5, 0.5, 1.0, 1.0]])
+        x_crop_size = width // x_steps
+        y_crop_size = height // y_steps
+        x_coords = [[i * x_crop_size, (i + 1) * x_crop_size] for i in range(x_steps)]
         if x_coords[-1][1] != width:
             x_coords[-1][1] = width
-        for i in range(y_steps):
-            y_coords.append([i * stride, i * stride + crop_size])
+        y_coords = [[i * y_crop_size, (i + 1) * y_crop_size] for i in range(y_steps)]
         if y_coords[-1][1] != height:
             y_coords[-1][1] = height
-        image_parts = []
-        part_coords = []
-        for i in range(len(x_coords)):
-            for j in range(len(y_coords)):
-                image_parts.append(
-                    image.crop(
-                        (x_coords[i][0], y_coords[j][0], x_coords[i][1], y_coords[j][1])
-                    )
-                )
-                part_coords.append(
+        for _, y_coord in enumerate(y_coords):
+            for _, x_coord in enumerate(x_coords):
+                print(x_coord, y_coord)
+                crop = image.crop((x_coord[0], y_coord[0], x_coord[1], y_coord[1]))
+                outputs.append(self.processor(crop, return_tensors="pt").pixel_values)
+                output_coords.append(
                     torch.tensor(
                         [
-                            (x_coords[i][0] + x_coords[i][1]) / 2 / width,
-                            (y_coords[j][0] + y_coords[j][1]) / 2 / height,
+                            (x_coord[0] + x_coord[1]) / 2 / width,
+                            (y_coord[0] + y_coord[1]) / 2 / height,
+                            (x_coord[1] - x_coord[0]) / width,
+                            (y_coord[1] - y_coord[0]) / height,
                         ]
                     )
                 )
-        for image_part in image_parts:
-            outputs.append(self.processor(image_part, return_tensors="pt").pixel_values)
-        for part_coord in part_coords:
-            output_coords.append(part_coord)
+        outputs.append(whole_image_res)
+        output_coords.append(whole_image_coords)
         outputs = torch.cat(outputs, dim=0)
         output_coords = torch.stack(output_coords, dim=0)
         return outputs, output_coords
@@ -127,11 +142,15 @@ class LlavaProcessor(ProcessorMixin):
         self.image_processor = image_processor
         self.tokenizer = tokenizer
         self.search_model = None
-    
+
     @classmethod
     def from_pretrained(cls, path, trust_remote_code=True, **kwargs):
-        tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=trust_remote_code)
-        image_processor = MultiCropImageProcessor(path, trust_remote_code=trust_remote_code)
+        tokenizer = AutoTokenizer.from_pretrained(
+            path, trust_remote_code=trust_remote_code
+        )
+        image_processor = MultiCropImageProcessor(
+            path, trust_remote_code=trust_remote_code
+        )
         return LlavaProcessor(image_processor, tokenizer)
 
     def __call__(
@@ -139,24 +158,22 @@ class LlavaProcessor(ProcessorMixin):
         text: Union[
             TextInput, PreTokenizedInput, List[TextInput], List[PreTokenizedInput]
         ] = None,
-        images: ImageInput = None,
-        model = None,
+        images: Union[List[Image.Image], None] = None,
+        model=None,
         max_crops: int = 0,
-        num_tokens = None,
+        num_tokens=None,
         padding: Union[bool, str, PaddingStrategy] = False,
         truncation: Union[bool, str, TruncationStrategy] = None,
         max_length=None,
         return_tensors: Optional[Union[str, TensorType]] = TensorType.PYTORCH,
     ) -> BatchFeature:
         if images is not None:
-            processor_outputs = self.image_processor(images, max_crops)
-            pixel_values = processor_outputs["pixel_values"]
-            pixel_values = [
-                value.to(model.device).to(model.dtype) for value in pixel_values
-            ]
-            coords = processor_outputs["coords"]
-            coords = [value.to(model.device).to(model.dtype) for value in coords]
-            image_outputs = model.vision_model(pixel_values, coords, num_tokens=num_tokens)
+            pixel_values, coords = self.image_processor(images, max_crops)
+            pixel_values = pixel_values.to(model.device)
+            coords = coords.to(model.device)
+            image_outputs = model.vision_model(
+                pixel_values, coords, num_tokens=num_tokens
+            )
             image_features = model.multi_modal_projector(image_outputs)
         else:
             image_features = None
@@ -167,8 +184,8 @@ class LlavaProcessor(ProcessorMixin):
             truncation=truncation,
             max_length=max_length,
         )
-        text_inputs['input_ids'] = text_inputs['input_ids'].to(model.device)
-        text_inputs['attention_mask'] = text_inputs['attention_mask'].to(model.device)
+        text_inputs["input_ids"] = text_inputs["input_ids"].to(model.device)
+        text_inputs["attention_mask"] = text_inputs["attention_mask"].to(model.device)
         return BatchFeature(data={**text_inputs, "image_features": image_features})
 
     def batch_decode(self, *args, **kwargs):

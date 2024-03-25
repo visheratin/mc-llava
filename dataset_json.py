@@ -11,8 +11,6 @@ from PIL import Image
 from torch.utils.data import Dataset
 
 from conversation import Conversation
-from processing_mc_llava import MultiCropImageProcessor
-import random
 
 
 @dataclass
@@ -27,8 +25,6 @@ class JsonDataset(Dataset):
         file_path: str,
         images_dir: str,
         tokenizer,
-        processor: MultiCropImageProcessor,
-        crops_limit: int,
         max_size: int,
     ) -> None:
         super().__init__()
@@ -44,9 +40,7 @@ class JsonDataset(Dataset):
         if max_size > 0:
             self.data = random.choices(self.data, k=max_size)
         self.tokenizer = tokenizer
-        self.processor = processor
         self.images_dir = images_dir
-        self.crop_limit = crops_limit
 
     def __len__(self):
         return len(self.data)
@@ -62,14 +56,11 @@ class JsonDataset(Dataset):
             image = self.open_image(item.id)
         except:
             return self.__getitem__(idx + 1)
-        max_crops = random.randint(0, self.crop_limit)
-        image_res = self.processor([image], max_crops)
         return (
             input_ids,
             attention_mask,
             labels,
-            image_res["pixel_values"],
-            image_res["coords"],
+            image,
         )
 
     def open_image(self, id: str):

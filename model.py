@@ -4,9 +4,14 @@ import bitsandbytes as bnb
 import lightning.pytorch as pl
 import torch
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-from transformers import BitsAndBytesConfig, get_cosine_schedule_with_warmup
+from transformers import (
+    AutoModelForCausalLM,
+    BitsAndBytesConfig,
+    SiglipVisionModel,
+    get_cosine_schedule_with_warmup,
+)
 
-from modeling_mc_llava import LlavaForCausalLM
+from modeling_mc_llava import LlavaConfig, LlavaForCausalLM, LlavaMultiModalProjector
 from util import find_all_linear_names
 
 
@@ -42,8 +47,10 @@ class MCLLaVAModel(pl.LightningModule):
             "visheratin/MC-LLaVA-3b",
             **quant_args,
         )
+        self.reset_model()
         self.model.train()
         self.model.language_model.gradient_checkpointing_enable()
+        self.model.vision_model.vision_tower.gradient_checkpointing_enable()
         if bits in [4, 8]:
             self.model = prepare_model_for_kbit_training(
                 self.model, use_gradient_checkpointing=True
@@ -92,12 +99,12 @@ class MCLLaVAModel(pl.LightningModule):
         ],
         batch_idx: int,
     ):
-        input_ids, attention_mask, labels, images, coords = batch
-        image_features = []
-        for i in range(images.size(0)):
-            image_features.append(self.model.vision_model([images[i]], [coords[i]]))
-        image_features = torch.cat(image_features)
-        image_features = self.model.multi_modal_projector(image_features)
+        input_ids, attention_mask, labels, pixel_values, coords = batch
+        original_shape = pixel_values.shape
+        pixel_values = pixel_values.view(-1, *pixel_values.shape[2:])
+        coords = coords.view(-1, *coords.shape[2:])
+        image_features = self.model.vision_model(pixel_values, coords)
+        image_features = image_features.view(*original_shape[:2], -1)
         outputs = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -123,3 +130,18 @@ class MCLLaVAModel(pl.LightningModule):
                 sync_dist=True,
             )
         return {"loss": loss}
+
+    def reset_model(self):
+        config = LlavaConfig.from_pretrained("visheratin/MC-LLaVA-3b")
+        self.model.language_model = AutoModelForCausalLM.from_pretrained(
+            "vince62s/phi-2-psy", trust_remote_code=True
+        )
+        self.model.vision_model.vision_tower = SiglipVisionModel.from_pretrained(
+            "google/siglip-so400m-patch14-384"
+        )
+        self.model.vision_model.coord_embed = torch.nn.Sequential(
+            torch.nn.Linear(4, config.vision_embed_dim),
+            torch.nn.GELU(),
+            torch.nn.Linear(config.vision_embed_dim, config.vision_embed_dim),
+        )
+        self.model.multi_modal_projector = LlavaMultiModalProjector(config)

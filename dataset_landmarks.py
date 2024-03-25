@@ -8,7 +8,6 @@ from datasets import load_dataset
 from torch.utils.data import Dataset
 
 from conversation import Conversation
-from processing_mc_llava import MultiCropImageProcessor
 from PIL import Image
 import os
 import requests
@@ -98,44 +97,17 @@ country_questions = [
     "Please, could you indicate the country where this place is situated?",
 ]
 
-place_questions = [
-    "Where is this place located?",
-    "Can you provide the location of this place?",
-    "Could you tell me where this place is situated?",
-    "What is the specific location of this place?",
-    "I'm interested in finding out where this place is located; can you share that information?",
-    "Please, could you indicate the whereabouts of this place?",
-    "Where exactly can I find this place?",
-    "Could you share the precise location of this place?",
-    "I need the location of this place; can you provide it?",
-    "What's the location of this place?",
-    "Can you pinpoint where this place is located?",
-    "Please inform me of the location of this place.",
-    "Could you disclose the exact location of this place?",
-    "Where is this place found?",
-    "Can you provide the details of where this place is situated?",
-    "What's the geographical location of this place?",
-    "Could you tell me the exact location of this place?",
-    "I'm curious about the location of this place; can you inform me?",
-    "Could you specify the location of this place?",
-    "Can you reveal where this place is located?",
-]
-
 
 class LandmarksDataset(Dataset):
     def __init__(
         self,
         images_dir: str,
         tokenizer,
-        processor: MultiCropImageProcessor,
-        crops_limit: int = 8,
     ) -> None:
         super().__init__()
         self.images_dir = images_dir
         os.makedirs(images_dir, exist_ok=True)
         self.tokenizer = tokenizer
-        self.processor = processor
-        self.crops_limit = crops_limit
         cache_path = os.path.join(images_dir, "landmarks.pkl")
         if os.path.exists(cache_path):
             with open(cache_path, "rb") as f:
@@ -190,14 +162,11 @@ class LandmarksDataset(Dataset):
                 continue
         if image is None:
             return self.__getitem__(idx + 1)
-        max_crops = random.randint(0, self.crops_limit)
-        image_res = self.processor([image], max_crops)
         return (
             input_ids,
             attention_mask,
             labels,
-            image_res["pixel_values"],
-            image_res["coords"],
+            image,
         )
 
     def open_image(self, info: ImageInfo):
@@ -222,28 +191,13 @@ class LandmarksDataset(Dataset):
     def format_item(self, item: LandmarkInfo):
         prob = random.random()
         if prob > 0.5:
-            question = random.choice(place_questions)
-            prob = random.random()
-            if prob > 0.5:
-                return question, f"({item.latitude}, {item.longitude})"
-            else:
-                location = ""
-                if item.city != "":
-                    location += f"{item.city}, "
-                if item.state != "":
-                    location += f"{item.state}, "
-                location += item.country
-                return question, location
+            question = random.choice(lat_lon_questions)
+            return question, f"({item.latitude}, {item.longitude})"
         else:
             prob = random.random()
-            if prob > 0.5:
-                question = random.choice(lat_lon_questions)
-                return question, f"({item.latitude}, {item.longitude})"
+            if item.city != "" and prob > 0.5:
+                question = random.choice(city_questions)
+                return question, item.city
             else:
-                prob = random.random()
-                if item.city != "" and prob > 0.5:
-                    question = random.choice(city_questions)
-                    return question, item.city
-                else:
-                    question = random.choice(country_questions)
-                    return question, item.country
+                question = random.choice(country_questions)
+                return question, item.country
