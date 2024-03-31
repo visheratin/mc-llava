@@ -82,10 +82,23 @@ if __name__ == "__main__":
         dest="freeze_text",
     )
     parser.add_argument(
+        "-fq",
+        "--freeze_query",
+        type=bool,
+        dest="freeze_query",
+    )
+    parser.add_argument(
         "-b",
         "--bits",
         type=int,
         dest="bits",
+    )
+    parser.add_argument(
+        "-as",
+        "--accumulate_steps",
+        type=int,
+        dest="accumulate_steps",
+        default=1,
     )
     args = parser.parse_args()
 
@@ -100,20 +113,24 @@ if __name__ == "__main__":
             lr=args.learning_rate,
             freeze_vision=args.freeze_vision,
             freeze_text=args.freeze_text,
+            freeze_query=args.freeze_query,
             total_steps=train_steps,
             warmup_steps=warmup_steps,
             use_lora=args.use_lora,
             bits=args.bits,
+            accumulate_steps=args.accumulate_steps,
         )
     else:
         model = MCLLaVAModel(
             lr=args.learning_rate,
             freeze_vision=args.freeze_vision,
             freeze_text=args.freeze_text,
+            freeze_query=args.freeze_query,
             total_steps=train_steps,
             warmup_steps=warmup_steps,
             use_lora=args.use_lora,
             bits=args.bits,
+            accumulate_steps=args.accumulate_steps,
         )
 
     log_dir = Path("training") / "logs"
@@ -127,10 +144,11 @@ if __name__ == "__main__":
         max_epochs=args.epochs_num,
         accelerator="gpu",
         devices=-1,
-        precision="bf16-mixed",
+        precision="bf16-true",
         log_every_n_steps=1,
         logger=wandb_logger,
-        strategy=DeepSpeedStrategy(stage=3),
+        accumulate_grad_batches=args.accumulate_steps,
+        strategy=DeepSpeedStrategy(stage=2),
     )
     params = {
         "batch_size": data_module.batch_size,

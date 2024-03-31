@@ -3,7 +3,6 @@ import random
 from io import BytesIO
 
 import requests
-import torch
 from datasets import load_dataset
 from PIL import Image
 from torch.utils.data import Dataset
@@ -11,18 +10,18 @@ from torch.utils.data import Dataset
 from conversation import Conversation
 
 
-class ObjectsDataset(Dataset):
+class SvitDataset(Dataset):
     def __init__(
         self,
         images_dir: str,
         tokenizer,
         query_tokenizer,
-        max_size: int,
+        max_size: int = 0,
     ) -> None:
         super().__init__()
         self.images_dir = images_dir
         os.makedirs(images_dir, exist_ok=True)
-        dataset = load_dataset("visheratin/object_questions")
+        dataset = load_dataset("visheratin/SVIT")
         self.dataset = dataset["train"]
         if max_size > 0:
             self.dataset = self.dataset.shuffle()
@@ -48,7 +47,7 @@ class ObjectsDataset(Dataset):
         _, input_ids, labels = conv.get_prompt(self.tokenizer)
         image = None
         try:
-            image = self.open_image(item["id"])
+            image = self.open_image(item["id"], item["url"])
         except:
             return self.__getitem__(idx + 1)
         return (
@@ -58,12 +57,11 @@ class ObjectsDataset(Dataset):
             query_input_ids,
         )
 
-    def open_image(self, id: str):
+    def open_image(self, id: str, url: str):
         file_path = os.path.join(self.images_dir, f"{id}.jpg")
         if os.path.exists(file_path):
             return Image.open(file_path).convert("RGB")
         else:
-            url = f"https://nllb-data.com/{id}.jpg"
             response = requests.get(url, timeout=10)
             image = Image.open(BytesIO(response.content))
             image = image.convert("RGB")

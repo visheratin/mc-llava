@@ -103,11 +103,13 @@ class LandmarksDataset(Dataset):
         self,
         images_dir: str,
         tokenizer,
+        query_tokenizer,
     ) -> None:
         super().__init__()
         self.images_dir = images_dir
         os.makedirs(images_dir, exist_ok=True)
         self.tokenizer = tokenizer
+        self.query_tokenizer = query_tokenizer
         cache_path = os.path.join(images_dir, "landmarks.pkl")
         if os.path.exists(cache_path):
             with open(cache_path, "rb") as f:
@@ -146,11 +148,12 @@ class LandmarksDataset(Dataset):
     def __getitem__(self, idx):
         item = self.landmarks[idx]
         question, answer = self.format_item(item)
+        query_input_ids = self.query_tokenizer(
+            question, return_tensors="pt"
+        ).input_ids.squeeze(0)
         question = f"<image>\n{question}"
         conv = Conversation([question, answer])
         _, input_ids, labels = conv.get_prompt(self.tokenizer)
-        attention_mask = torch.ne(input_ids, self.tokenizer.pad_token_id)
-
         image = None
         for _ in range(3):
             try:
@@ -164,9 +167,9 @@ class LandmarksDataset(Dataset):
             return self.__getitem__(idx + 1)
         return (
             input_ids,
-            attention_mask,
             labels,
             image,
+            query_input_ids,
         )
 
     def open_image(self, info: ImageInfo):

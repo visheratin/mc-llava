@@ -9,10 +9,12 @@ class TextvqaDataset(Dataset):
     def __init__(
         self,
         tokenizer,
+        query_tokenizer,
     ) -> None:
         super().__init__()
         self.dataset = load_dataset("lmms-lab/textvqa", split="train", num_proc=6)
         self.tokenizer = tokenizer
+        self.query_tokenizer = query_tokenizer
 
     def __len__(self):
         return len(self.dataset)
@@ -20,16 +22,18 @@ class TextvqaDataset(Dataset):
     def __getitem__(self, idx):
         item = self.dataset[idx]
         question = item["question"]
+        query_input_ids = self.query_tokenizer(
+            question, return_tensors="pt"
+        ).input_ids.squeeze(0)
         answer = item["answers"][0]
         question = f"<image>\n{question}"
         conv = Conversation([question, answer])
         _, input_ids, labels = conv.get_prompt(self.tokenizer)
-        attention_mask = torch.ne(input_ids, self.tokenizer.pad_token_id)
 
         image = item["image"].convert("RGB")
         return (
             input_ids,
-            attention_mask,
             labels,
             image,
+            query_input_ids,
         )

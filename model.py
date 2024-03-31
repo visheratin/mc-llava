@@ -8,6 +8,7 @@ from transformers import (
     AutoModelForCausalLM,
     BitsAndBytesConfig,
     SiglipVisionModel,
+    SiglipTextModel,
     get_cosine_schedule_with_warmup,
 )
 
@@ -23,8 +24,10 @@ class MCLLaVAModel(pl.LightningModule):
         warmup_steps: int,
         freeze_vision: bool,
         freeze_text: bool,
+        freeze_query: bool,
         use_lora: bool,
         bits: int,
+        accumulate_steps: int,
     ):
         super().__init__()
         # self.automatic_optimization = False
@@ -49,6 +52,11 @@ class MCLLaVAModel(pl.LightningModule):
         )
         self.reset_model()
         self.model.train()
+
+        self.query_model = SiglipTextModel.from_pretrained(
+            "google/siglip-so400m-patch14-384"
+        )
+
         self.model.language_model.gradient_checkpointing_enable()
         self.model.vision_model.vision_tower.gradient_checkpointing_enable()
         if bits in [4, 8]:
@@ -77,9 +85,13 @@ class MCLLaVAModel(pl.LightningModule):
         if freeze_text:
             for param in self.model.language_model.parameters():
                 param.requires_grad = False
+        self.freeze_query = freeze_query
+        if freeze_query:
+            for param in self.query_model.parameters():
+                param.requires_grad = False
         self.learning_rate = lr
-        self.total_steps = total_steps
-        self.warmup_steps = warmup_steps
+        self.total_steps = total_steps / accumulate_steps
+        self.warmup_steps = warmup_steps / accumulate_steps
 
     def configure_optimizers(self):
         optimizer = bnb.optim.PagedAdamW8bit(
@@ -95,15 +107,37 @@ class MCLLaVAModel(pl.LightningModule):
     def training_step(
         self,
         batch: Tuple[
-            torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
         ],
         batch_idx: int,
     ):
-        input_ids, attention_mask, labels, pixel_values, coords = batch
+        (
+            input_ids,
+            attention_mask,
+            labels,
+            pixel_values,
+            coords,
+            query_input_ids,
+            query_attention_mask,
+        ) = batch
+        query_features = self.query_model(
+            query_input_ids, query_attention_mask
+        ).pooler_output
+        query_features = query_features.unsqueeze(1)
         original_shape = pixel_values.shape
         pixel_values = pixel_values.view(-1, *pixel_values.shape[2:])
         coords = coords.view(-1, *coords.shape[2:])
         image_features = self.model.vision_model(pixel_values, coords)
+        image_features = image_features.view(*original_shape[:2], -1)
+        image_features = image_features * query_features
+        image_features = image_features.view(-1, *image_features.shape[2:])
+        image_features = self.model.multi_modal_projector(image_features)
         image_features = image_features.view(*original_shape[:2], -1)
         outputs = self.model(
             input_ids=input_ids,
@@ -120,12 +154,18 @@ class MCLLaVAModel(pl.LightningModule):
             batch_size=input_ids.shape[0],
             sync_dist=True,
         )
+        self.log(
+            "train/epoch",
+            self.global_step / self.total_steps,
+            batch_size=input_ids.shape[0],
+            sync_dist=True,
+        )
         if self.lr_schedulers() is not None:
             lr = self.lr_schedulers().get_last_lr()[0]
             self.log(
                 "train/learning_rate",
                 lr,
-                prog_bar=False,
+                prog_bar=True,
                 batch_size=input_ids.shape[0],
                 sync_dist=True,
             )

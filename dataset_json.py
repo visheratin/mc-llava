@@ -3,12 +3,12 @@ import os
 import random
 from dataclasses import dataclass
 from io import BytesIO
-from typing import List
+from typing import List, Union
 
 import requests
-import torch
 from PIL import Image
 from torch.utils.data import Dataset
+from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from conversation import Conversation
 
@@ -24,7 +24,8 @@ class JsonDataset(Dataset):
         self,
         file_path: str,
         images_dir: str,
-        tokenizer,
+        tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
+        query_tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
         max_size: int,
     ) -> None:
         super().__init__()
@@ -40,6 +41,7 @@ class JsonDataset(Dataset):
         if max_size > 0:
             self.data = random.choices(self.data, k=max_size)
         self.tokenizer = tokenizer
+        self.query_tokenizer = query_tokenizer
         self.images_dir = images_dir
 
     def __len__(self):
@@ -49,8 +51,9 @@ class JsonDataset(Dataset):
         item = self.data[idx]
         conv = Conversation(item.messages)
         _, input_ids, labels = conv.get_prompt(self.tokenizer)
-        attention_mask = torch.ne(input_ids, self.tokenizer.pad_token_id)
-
+        query_input_ids = self.query_tokenizer(
+            item.messages[0], return_tensors="pt"
+        ).input_ids.squeeze(0)
         image = None
         try:
             image = self.open_image(item.id)
@@ -58,9 +61,9 @@ class JsonDataset(Dataset):
             return self.__getitem__(idx + 1)
         return (
             input_ids,
-            attention_mask,
             labels,
             image,
+            query_input_ids,
         )
 
     def open_image(self, id: str):

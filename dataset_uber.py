@@ -11,11 +11,13 @@ class UberDataset(Dataset):
     def __init__(
         self,
         tokenizer,
+        query_tokenizer,
     ) -> None:
         super().__init__()
         dataset = load_dataset("visheratin/uber_text_qa", num_proc=6)
         self.dataset = concatenate_datasets([dataset["train"], dataset["val"]])
         self.tokenizer = tokenizer
+        self.query_tokenizer = query_tokenizer
 
     def __len__(self):
         return len(self.dataset)
@@ -27,15 +29,17 @@ class UberDataset(Dataset):
         question_idx = random.randrange(0, len(item["questions"]))
         question = item["questions"][question_idx]
         answer = item["answers"][question_idx]
+        query_input_ids = self.query_tokenizer(
+            item.messages[0], return_tensors="pt"
+        ).input_ids.squeeze(0)
         question = f"<image>\n{question}"
         conv = Conversation([question, answer])
         _, input_ids, labels = conv.get_prompt(self.tokenizer)
-        attention_mask = torch.ne(input_ids, self.tokenizer.pad_token_id)
 
         image = item["image"]
         return (
             input_ids,
-            attention_mask,
             labels,
             image,
+            query_input_ids,
         )

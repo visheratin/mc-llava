@@ -6,3 +6,6 @@ bitsandbytes
 accelerate
 datasets
 wandb
+flash-attn
+sentencepiece
+deepspeed

@@ -67,6 +67,7 @@ class MultiCropImageProcessor(ImageProcessingMixin):
         for i in range(len(highly_composite_numbers) - 1, -1, -1):
             if highly_composite_numbers[i] <= n_crops:
                 return highly_composite_numbers[i]
+        return 1
 
     def crops_num(self, image: Image.Image, crop_size: int):
         width, height = image.size
@@ -77,6 +78,8 @@ class MultiCropImageProcessor(ImageProcessingMixin):
     def process_image(self, image: Image.Image, crops_num: int):
         whole_image_res = self.processor(image, return_tensors="pt").pixel_values
         whole_image_coords = torch.tensor([0.5, 0.5, 1.0, 1.0])
+        if crops_num < 2:
+            return whole_image_res, whole_image_coords.unsqueeze(0)
         outputs = []
         output_coords = []
         width, height = image.size
@@ -100,9 +103,7 @@ class MultiCropImageProcessor(ImageProcessingMixin):
         if y_steps < 1:
             y_steps = 1
         if x_steps == 1 and y_steps == 1:
-            return self.processor(
-                image, return_tensors="pt"
-            ).pixel_values, torch.tensor([[0.5, 0.5, 1.0, 1.0]])
+            return whole_image_res, whole_image_coords.unsqueeze(0)
         x_crop_size = width // x_steps
         y_crop_size = height // y_steps
         x_coords = [[i * x_crop_size, (i + 1) * x_crop_size] for i in range(x_steps)]
