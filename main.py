@@ -79,6 +79,7 @@ if __name__ == "__main__":
         "--use_lora",
         type=bool,
         dest="use_lora",
+        default=False,
     )
     parser.add_argument(
         "-fv",
@@ -103,6 +104,7 @@ if __name__ == "__main__":
         "--accumulate_batches",
         type=int,
         dest="accumulate_batches",
+        default=1,
     )
     args = parser.parse_args()
 

@@ -94,6 +94,7 @@ class MCLLaVAModel(pl.LightningModule):
         pixel_values = pixel_values.view(-1, *pixel_values.shape[2:])
         coords = coords.view(-1, *coords.shape[2:])
         image_features = self.model.vision_model(pixel_values, coords)
+        image_features = self.model.multi_modal_projector(image_features)
         image_features = image_features.view(*original_shape[:2], -1)
         outputs = self.model(
             input_ids=input_ids,

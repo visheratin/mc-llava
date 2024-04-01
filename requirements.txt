@@ -6,5 +6,4 @@ bitsandbytes
 accelerate
 datasets
 wandb
-flash-attn
 deepspeed
