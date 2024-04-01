@@ -30,12 +30,10 @@ class UberDataset(Dataset):
         question = f"<image>\n{question}"
         conv = Conversation([question, answer])
         _, input_ids, labels = conv.get_prompt(self.tokenizer)
-        attention_mask = torch.ne(input_ids, self.tokenizer.pad_token_id)
 
         image = item["image"]
         return (
             input_ids,
-            attention_mask,
             labels,
             image,
         )

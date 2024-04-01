@@ -41,7 +41,6 @@ class ObjectsDataset(Dataset):
         question = f"<image>\n{question}"
         conv = Conversation([question, answer])
         _, input_ids, labels = conv.get_prompt(self.tokenizer)
-        attention_mask = torch.ne(input_ids, self.tokenizer.pad_token_id)
 
         image = None
         try:
@@ -50,7 +49,6 @@ class ObjectsDataset(Dataset):
             return self.__getitem__(idx + 1)
         return (
             input_ids,
-            attention_mask,
             labels,
             image,
         )

@@ -8,6 +8,7 @@ from lightning.pytorch.strategies import DeepSpeedStrategy
 
 from data_module import TrainingDataModule
 from model import MCLLaVAModel
+from wsd_scheduler import WSDParameters
 
 if __name__ == "__main__":
     torch.set_float32_matmul_precision("high")
@@ -20,16 +21,11 @@ if __name__ == "__main__":
         dest="learning_rate",
     )
     parser.add_argument(
-        "-vlr",
-        "--vision_learning_rate",
+        "-lrm",
+        "--learning_rate_min",
         type=float,
-        dest="vision_learning_rate",
-    )
-    parser.add_argument(
-        "-tlr",
-        "--text_learning_rate",
-        type=float,
-        dest="text_learning_rate",
+        dest="learning_rate_min",
+        default=0.1,
     )
     parser.add_argument(
         "-bs",
@@ -62,6 +58,21 @@ if __name__ == "__main__":
         "--warmup_ratio",
         type=float,
         dest="warmup_ratio",
+        default=0.03,
+    )
+    parser.add_argument(
+        "-sr",
+        "--stable_ratio",
+        type=float,
+        dest="stable_ratio",
+        default=0.5,
+    )
+    parser.add_argument(
+        "-ar",
+        "--annealing_ratio",
+        type=float,
+        dest="annealing_ratio",
+        default=0.1,
     )
     parser.add_argument(
         "-l",
@@ -87,12 +98,30 @@ if __name__ == "__main__":
         type=int,
         dest="bits",
     )
+    parser.add_argument(
+        "-ab",
+        "--accumulate_batches",
+        type=int,
+        dest="accumulate_batches",
+    )
     args = parser.parse_args()
 
     data_module = TrainingDataModule(args.batch_size, args.data_dir)
 
-    train_steps = int(len(data_module.dataset) / args.batch_size * args.epochs_num / torch.cuda.device_count())
-    warmup_steps = int(train_steps * args.warmup_ratio)
+    train_steps = int(
+        len(data_module.dataset)
+        / args.batch_size
+        * args.epochs_num
+        / torch.cuda.device_count()
+        / args.accumulate_batches
+    )
+    scheduler_params = WSDParameters(
+        total_steps=train_steps,
+        warmup_ratio=args.warmup_ratio,
+        stable_ratio=args.stable_ratio,
+        annealing_ratio=args.annealing_ratio,
+        min_lr_ratio=args.learning_rate_min,
+    )
 
     if args.checkpoint_path != "":
         model = MCLLaVAModel.load_from_checkpoint(
@@ -100,8 +129,7 @@ if __name__ == "__main__":
             lr=args.learning_rate,
             freeze_vision=args.freeze_vision,
             freeze_text=args.freeze_text,
-            total_steps=train_steps,
-            warmup_steps=warmup_steps,
+            scheduler_params=scheduler_params,
             use_lora=args.use_lora,
             bits=args.bits,
         )
@@ -110,8 +138,7 @@ if __name__ == "__main__":
             lr=args.learning_rate,
             freeze_vision=args.freeze_vision,
             freeze_text=args.freeze_text,
-            total_steps=train_steps,
-            warmup_steps=warmup_steps,
+            scheduler_params=scheduler_params,
             use_lora=args.use_lora,
             bits=args.bits,
         )
@@ -130,7 +157,8 @@ if __name__ == "__main__":
         precision="bf16-mixed",
         log_every_n_steps=1,
         logger=wandb_logger,
-        strategy=DeepSpeedStrategy(stage=3),
+        strategy=DeepSpeedStrategy(stage=2),
+        accumulate_grad_batches=args.accumulate_batches,
     )
     params = {
         "batch_size": data_module.batch_size,

@@ -1,57 +1,48 @@
-import json
 import os
 import random
-from dataclasses import dataclass
 from io import BytesIO
-from typing import List
 
 import requests
+from datasets import load_dataset
 from PIL import Image
 from torch.utils.data import Dataset
 
 from conversation import Conversation
 
 
-@dataclass
-class DataItem:
-    id: str
-    messages: List[str]
-
-
-class JsonDataset(Dataset):
+class SvitDataset(Dataset):
     def __init__(
         self,
-        file_path: str,
         images_dir: str,
         tokenizer,
-        max_size: int,
+        max_size: int = 0,
     ) -> None:
         super().__init__()
-        with open(file_path, "r") as f:
-            data = json.load(f)
-        self.data: List[DataItem] = []
-        for item in data:
-            id = item["id"]
-            messages = []
-            for conv_item in item["conversations"]:
-                messages.append(conv_item["value"])
-            self.data.append(DataItem(id, messages))
-        if max_size > 0:
-            self.data = random.choices(self.data, k=max_size)
-        self.tokenizer = tokenizer
         self.images_dir = images_dir
+        os.makedirs(images_dir, exist_ok=True)
+        dataset = load_dataset("visheratin/SVIT")
+        self.dataset = dataset["train"]
+        if max_size > 0:
+            self.dataset = self.dataset.shuffle()
+            self.dataset = self.dataset.select(list(range(max_size)))
+        self.tokenizer = tokenizer
 
     def __len__(self):
-        return len(self.data)
+        return len(self.dataset)
 
-    def __getitem__(self, idx: int):
-        item = self.data[idx]
-        conv = Conversation(item.messages)
+    def __getitem__(self, idx):
+        item = self.dataset[idx]
+        if len(item["questions"]) == 0:
+            return self.__getitem__(idx + 1)
+        question_idx = random.randrange(0, len(item["questions"]))
+        question = item["questions"][question_idx]
+        answer = item["answers"][question_idx]
+        question = f"<image>\n{question}"
+        conv = Conversation([question, answer])
         _, input_ids, labels = conv.get_prompt(self.tokenizer)
-
         image = None
         try:
-            image = self.open_image(item.id)
+            image = self.open_image(item["id"], item["url"])
         except:
             return self.__getitem__(idx + 1)
         return (
@@ -60,12 +51,11 @@ class JsonDataset(Dataset):
             image,
         )
 
-    def open_image(self, id: str):
+    def open_image(self, id: str, url: str):
         file_path = os.path.join(self.images_dir, f"{id}.jpg")
         if os.path.exists(file_path):
             return Image.open(file_path).convert("RGB")
         else:
-            url = f"https://nllb-data.com/{id}.jpg"
             response = requests.get(url, timeout=10)
             image = Image.open(BytesIO(response.content))
             image = image.convert("RGB")
